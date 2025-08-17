@@ -10,8 +10,8 @@ BASE_URL = "https://api.twitch.tv/helix"
 OAUTH_URL = "https://id.twitch.tv/oauth2/token"
 
 # Credenciales (poner en env vars del Space)
-CLIENT_ID = os.getenv("TWITCH_CLIENT_ID")
-CLIENT_SECRET = os.getenv("TWITCH_CLIENT_SECRET")
+CLIENT_ID = os.getenv("4lz42z4frmlvt13hb72ghrfi58ca84")
+CLIENT_SECRET = os.getenv("m8w6m55deqh9mj1her3dos0y6odlyy")
 # Opcional: el usuario puede pasar un token manual en TWITCH_APP_TOKEN
 APP_TOKEN = os.getenv("TWITCH_APP_TOKEN")
 
