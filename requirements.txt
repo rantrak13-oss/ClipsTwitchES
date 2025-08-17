@@ -1,17 +1,13 @@
+# versiones sugeridas y relativamente estables
 streamlit==1.25.0
+yt-dlp==2024.12.0
 moviepy==2.0.0
 opencv-python==4.8.1.78
-tensorflow==2.13.0
-tf-keras==2.13.0
-fer==22.4.0
-transformers==4.35.0
-torch==2.1.0
-torchaudio==2.1.0
-whisper==20230314
+librosa==0.10.1
+soundfile==0.12.1
 numpy==1.26.0
-pandas==2.1.0
-twitchAPI==3.2.0
+torch==2.1.0
+transformers==4.35.0
+openai-whisper==20230314    # o 'whisper' según el paquete; este nombre puede variar en PyPI
 requests==2.31.0
-librosa==0.10.0
-scipy==1.11.0
-streamlink==5.6.0
+tqdm==4.66.1
