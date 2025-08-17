@@ -1,0 +1,10 @@
+gradio
+twitchAPI
+yt-dlp
+moviepy
+opencv-python
+torch
+transformers
+fer
+numpy
+whisper
