@@ -1,28 +1,19 @@
-# Web UI
+# UI & infra
 streamlit==1.25.0
+requests==2.31.0
+tqdm==4.66.1
 
-# Twitch / descarga
-yt-dlp==2023.12.30
-streamlink==6.6.0
-
-# Procesamiento de vídeo
+# Descarga y vídeo
+yt-dlp==2024.12.0
 moviepy==1.0.3
 opencv-python-headless==4.8.1.78
+ffmpeg-python==0.2.0
 
-# Procesamiento de audio
+# Audio / ML
 librosa==0.10.1
 soundfile==0.12.1
 numpy==1.26.0
-
-# IA (NLP, Whisper, Sentiment)
 torch==2.1.2
-transformers==4.36.2
-whisper==1.1.10
 
-# TensorFlow + compatibilidad Keras
-tensorflow==2.15.0
-tf-keras==2.15.0
-
-# Utilidades
-requests==2.31.0
-tqdm==4.66.1
+# Whisper (desde repo oficial para evitar nombres PyPI inconsistentes)
+git+https://github.com/openai/whisper.git@main
