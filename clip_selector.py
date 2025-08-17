@@ -1,86 +1,70 @@
+# clip_selector.py
 import os
 import tempfile
 import numpy as np
-from pathlib import Path
 from moviepy.editor import VideoFileClip, concatenate_videoclips
+from typing import List
 
-def _ensure_path(input_video) -> str:
-    if isinstance(input_video, (str, os.PathLike)):
-        return str(input_video)
-    # Buffer -> archivo temporal
-    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".ts")
-    if hasattr(input_video, "read"):
-        tmp.write(input_video.read())
-    else:
-        tmp.write(input_video)
-    tmp.close()
-    return tmp.name
-
-
-def _nms_temporal(candidates, min_gap: float):
+def seleccionar_clips_from_scores(video_path: str, scores: np.ndarray, clip_length: float = 60.0, top_n: int = 10, min_gap: float = 30.0) -> str:
     """
-    Supresión simple de no-máximos temporal: si dos inicios están muy cerca, nos quedamos
-    con el que tenga score más alto. 'candidates' es lista de (start_sec, score).
+    Selecciona top_n instantes por score, evita solapes (min_gap segundos),
+    escribe cada subclip a disco temporal y concatena en un MP4 final.
+    Devuelve ruta al archivo final.
     """
-    # Ordenar por score descendente
-    candidates = sorted(candidates, key=lambda x: x[1], reverse=True)
-    selected = []
-    for start, score in candidates:
-        if all(abs(start - s0) >= min_gap for s0, _ in selected):
-            selected.append((start, score))
-    # Devolver orden cronológico
-    return sorted(selected, key=lambda x: x[0])
-
-
-def seleccionar_clips(video_input, scores, clip_length: float = 60.0, top_n: int = 10, min_gap: float = 30.0):
-    """
-    Selecciona los 'top_n' momentos con mayor score, evitando solapes cercanos (min_gap),
-    y devuelve un VideoClip concatenado. Clips en orden cronológico.
-    """
-    video_path = _ensure_path(video_input)
     cap = VideoFileClip(video_path)
-    duration = float(cap.duration)
+    duration = cap.duration
     if duration <= 0:
-        # Fallback: clip vacío controlado
-        return cap.subclip(0, 0)
+        raise RuntimeError("Duración inválida del video.")
 
-    # Paso temporal entre muestras de score
     step = duration / max(len(scores), 1)
 
-    # Índices top por score (descendente)
-    idx_sorted = np.argsort(scores)[::-1][:max(1, top_n)]
-    # Pasar a candidatos (start_time, score)
-    candidates = []
-    for idx in idx_sorted:
-        start = max(0.0, min(idx * step, max(0.0, duration - 1e-3)))
-        candidates.append((start, float(scores[idx])))
+    # Indices de top scores
+    idxs = np.argsort(scores)[::-1][:max(1, top_n)]
 
-    # No-Máximos temporal para evitar duplicados
-    picks = _nms_temporal(candidates, min_gap=min_gap)
-    if not picks:
-        # Fallback: un clip desde el principio
-        end = min(clip_length, duration)
-        return cap.subclip(0, end)
+    # Crear candidatos (start, score)
+    candidates = [(max(0.0, min(idx * step, duration - 0.001)), float(scores[idx])) for idx in idxs]
 
-    # Crear subclips ordenados y recortados dentro de los límites
-    clips = []
-    for start, _ in picks:
-        end = min(start + clip_length, duration)
-        if end > start:
-            try:
-                clips.append(cap.subclip(start, end))
-            except Exception:
-                # Si un subclip falla, lo saltamos
-                pass
+    # NMS temporal simple
+    selected = []
+    for start, score in sorted(candidates, key=lambda x: x[1], reverse=True):
+        if all(abs(start - s0) >= min_gap for s0, _ in selected):
+            selected.append((start, score))
+    # Orden cronológico
+    selected = sorted(selected, key=lambda x: x[0])
 
-    if not clips:
-        end = min(clip_length, duration)
-        return cap.subclip(0, end)
-
-    # Concatenación final; usar compose si hay tamaños/códecs distintos
+    subclip_paths = []
+    tmpdir = tempfile.mkdtemp(prefix="clips_")
     try:
-        final = concatenate_videoclips(clips, method="compose")
-    except Exception:
-        final = concatenate_videoclips(clips)
+        for i, (start, score) in enumerate(selected):
+            end = min(start + clip_length, duration)
+            if end <= start:
+                continue
+            out_path = os.path.join(tmpdir, f"clip_{i}.mp4")
+            try:
+                sub = cap.subclip(start, end)
+                sub.write_videofile(out_path, codec="libx264", audio_codec="aac", verbose=False, logger=None)
+                subclip_paths.append(out_path)
+            except Exception:
+                # saltar subclip si falla
+                continue
 
-    return final
+        if not subclip_paths:
+            # fallback: primer clip
+            fallback = os.path.join(tmpdir, "fallback.mp4")
+            cap.subclip(0, min(clip_length, duration)).write_videofile(fallback, codec="libx264", audio_codec="aac", verbose=False, logger=None)
+            return fallback
+
+        # Concatenate
+        clips = [VideoFileClip(p) for p in subclip_paths]
+        final_clip = concatenate_videoclips(clips, method="compose")
+        final_path = os.path.join(tmpdir, "final_mix.mp4")
+        # limit final duration to 1h if needed
+        if final_clip.duration > 3600:
+            final_clip = final_clip.subclip(0, 3600)
+        final_clip.write_videofile(final_path, codec="libx264", audio_codec="aac", verbose=False, logger=None)
+        return final_path
+    finally:
+        cap.close()
+        # Note: no borro subclip files inmediatamente para evitar errores si se están usando,
+        # app.py puede borrar tmpdir manualmente cuando haya terminado de servir el archivo.
+
