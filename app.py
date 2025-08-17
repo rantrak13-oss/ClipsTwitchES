@@ -1,101 +1,119 @@
+import os
 import gradio as gr
 from twitchAPI.twitch import Twitch
-import os
+import yt_dlp
 from moviepy.editor import VideoFileClip, concatenate_videoclips
 import cv2
 import numpy as np
+from fer import FER
 import torch
 from transformers import pipeline
 import whisper
-from fer import FER
 
-# --- CONFIGURACIÓN DE TWITCH ---
+# -----------------------------
+# CONFIGURACIÓN DE TWITCH
+# -----------------------------
 TWITCH_CLIENT_ID = "TU_CLIENT_ID"
 TWITCH_CLIENT_SECRET = "TU_CLIENT_SECRET"
 twitch = Twitch(TWITCH_CLIENT_ID, TWITCH_CLIENT_SECRET)
 twitch.authenticate_app([])
 
-# --- MODELOS ---
-whisper_model = whisper.load_model("small")  # Transcripción
-emotion_detector = FER(mtcnn=True)  # Detección de emociones
-sentiment_pipeline = pipeline("sentiment-analysis")  # Análisis de texto
+# -----------------------------
+# FUNCIONES DE DESCARGA
+# -----------------------------
+def descargar_stream(url):
+    output_path = "videos"
+    os.makedirs(output_path, exist_ok=True)
+    ydl_opts = {
+        'outtmpl': f'{output_path}/%(title)s.%(ext)s',
+        'format': 'bestvideo+bestaudio/best'
+    }
+    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        info = ydl.extract_info(url, download=True)
+        filepath = ydl.prepare_filename(info)
+    return filepath
 
-# --- FUNCIONES ---
-def descargar_stream(video_url):
-    """
-    Descarga el stream completo usando yt-dlp
-    """
-    filename = "stream.mp4"
-    os.system(f"yt-dlp -o {filename} {video_url}")
-    return filename
+# -----------------------------
+# FUNCIONES DE ANALISIS
+# -----------------------------
+# 1. Detección de emociones
+def analizar_emociones(video_path):
+    detector = FER(mtcnn=True)
+    cap = cv2.VideoCapture(video_path)
+    frames_with_hype = []
+    frame_count = 0
+    while True:
+        ret, frame = cap.read()
+        if not ret:
+            break
+        frame_count += 1
+        result = detector.detect_emotions(frame)
+        if result:
+            for face in result:
+                emotions = face["emotions"]
+                if emotions["happy"] > 0.5 or emotions["surprise"] > 0.5:
+                    frames_with_hype.append(frame_count)
+    cap.release()
+    return frames_with_hype
 
-def analizar_video(file_path):
-    """
-    Analiza el vídeo para detectar emociones y cambios de escena
-    """
-    clip = VideoFileClip(file_path)
-    timestamps = []
-    for t in np.arange(0, clip.duration, 2.0):  # cada 2 segundos
-        frame = clip.get_frame(t)
-        emotions = emotion_detector.detect_emotions(frame)
-        if emotions:  # si detecta emoción fuerte
-            timestamps.append(t)
-    return timestamps
+# 2. Transcripción de audio
+def transcribir_audio(video_path):
+    model = whisper.load_model("base")
+    result = model.transcribe(video_path)
+    return result["segments"]
 
-def transcribir_audio(file_path):
-    """
-    Transcribe audio y detecta frases virales / reacciones
-    """
-    result = whisper_model.transcribe(file_path)
-    text_segments = []
-    for seg in result["segments"]:
-        sentiment = sentiment_pipeline(seg["text"])[0]
-        if sentiment["label"] in ["POSITIVE", "NEGATIVE"]:
-            text_segments.append((seg["start"], seg["end"]))
-    return text_segments
+# 3. Análisis de sentimiento
+sentiment_pipeline = pipeline("sentiment-analysis")
 
-def combinar_momentos(video_path, video_marks, audio_marks):
-    """
-    Combina señales de audio + video para elegir los clips
-    """
-    clip = VideoFileClip(video_path)
-    final_clips = []
-    for start in video_marks:
-        for (a_start, a_end) in audio_marks:
-            if a_start <= start <= a_end:
-                end = min(start + 60*60, clip.duration)  # max 1h
-                final_clips.append(clip.subclip(start, end))
-                break
-    if not final_clips:
-        return None
-    final_video = concatenate_videoclips(final_clips)
-    output_file = "clips_generados.mp4"
-    final_video.write_videofile(output_file, codec="libx264")
-    return output_file
+def analizar_sentimiento(text_segments):
+    hype_indices = []
+    for seg in text_segments:
+        score = sentiment_pipeline(seg["text"])[0]
+        if score["label"] in ["POSITIVE"]:
+            hype_indices.append(seg["start"])
+    return hype_indices
 
-def generar_clips(video_url):
-    """
-    Función principal para generar clips
-    """
-    try:
-        stream_file = descargar_stream(video_url)
-        video_marks = analizar_video(stream_file)
-        audio_marks = transcribir_audio(stream_file)
-        output = combinar_momentos(stream_file, video_marks, audio_marks)
-        if output:
-            return output
-        else:
-            return "No se detectaron momentos relevantes."
-    except Exception as e:
-        return f"Error: {str(e)}"
+# -----------------------------
+# FUNCIÓN PRINCIPAL
+# -----------------------------
+def generar_clips(twitch_url):
+    video_path = descargar_stream(twitch_url)
+    
+    # Analisis
+    frames_hype = analizar_emociones(video_path)
+    text_segments = transcribir_audio(video_path)
+    text_hype = analizar_sentimiento(text_segments)
+    
+    # Combinamos señales simples (frames + texto)
+    hype_times = sorted(set([f/30 for f in frames_hype] + text_hype))  # asumimos 30 fps
+    
+    # Cortar clips de max 1h
+    clips = []
+    video = VideoFileClip(video_path)
+    start = 0
+    max_duration = 3600  # 1h en segundos
+    
+    for t in hype_times:
+        if t - start >= max_duration:
+            clip = video.subclip(start, t)
+            clip_path = f"clips/clip_{int(start)}_{int(t)}.mp4"
+            os.makedirs("clips", exist_ok=True)
+            clip.write_videofile(clip_path, codec="libx264", audio_codec="aac")
+            clips.append(clip_path)
+            start = t
+    
+    return clips
 
-# --- INTERFAZ GRADIO ---
+# -----------------------------
+# INTERFAZ GRADIO
+# -----------------------------
 iface = gr.Interface(
     fn=generar_clips,
     inputs=gr.Textbox(label="URL del stream de Twitch"),
-    outputs=gr.File(label="Descargar clips generados"),
-    title="Generador Avanzado de Clips de Twitch",
-    description="Analiza streams, detecta los mejores momentos y genera clips de máximo 1 hora."
+    outputs=gr.File(label="Clips generados"),
+    title="Clipper Automático de Twitch",
+    description="Analiza streams y genera clips de máximo 1h con los mejores momentos usando emociones, audio y texto."
 )
 
 iface.launch()
+
