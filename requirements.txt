@@ -1,10 +1,12 @@
 gradio
 twitchAPI
 yt-dlp
-moviepy
-opencv-python
+moviepy==1.0.3
+opencv-python-headless
 torch
 transformers
 fer
+tensorflow
+tf-keras
+git+https://github.com/openai/whisper.git
 numpy
-whisper
