@@ -1,19 +1,16 @@
-# UI & infra
+# UI y utilidades
 streamlit==1.25.0
 requests==2.31.0
 tqdm==4.66.1
 
-# Descarga y vídeo
-yt-dlp==2024.12.0
-moviepy==1.0.3
-opencv-python-headless==4.8.1.78
-ffmpeg-python==0.2.0
-
-# Audio / ML
+# vídeo/audio y procesamiento ligero
+yt-dlp==2025.1.26
 librosa==0.10.1
 soundfile==0.12.1
-numpy==1.26.0
-torch==2.1.2
+numpy==1.25.2
 
-# Whisper (desde repo oficial para evitar nombres PyPI inconsistentes)
-git+https://github.com/openai/whisper.git@main
+# model / whisper (compatibilidad con torch cpu)
+whisper==1.1.10
+
+# ffmpeg-python opcional (no obligatorio si usamos subprocess)
+ffmpeg-python==0.2.0
