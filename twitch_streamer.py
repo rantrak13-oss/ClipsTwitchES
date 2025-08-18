@@ -1,64 +1,39 @@
-import os
-import time
-import requests
-from typing import List, Optional
+# twitch_streamer.py
+import os, requests
 from urllib.parse import urlencode
-import subprocess
-from pathlib import Path
+from typing import List
 
-API_BASE = "https://api.twitch.tv/helix"
+BASE = "https://api.twitch.tv/helix"
+OAUTH = "https://id.twitch.tv/oauth2/token"
+CLIENT_ID = os.getenv("4lz42z4frmlvt13hb72ghrfi58ca84")
+CLIENT_SECRET = os.getenv("m8w6m55deqh9mj1her3dos0y6odlyy")
+APP_TOKEN = os.getenv("TWITCH_APP_TOKEN")
+TIMEOUT = 10
 
-def _get_app_token(client_id: str, client_secret: str) -> str:
-    data = {"client_id": client_id, "client_secret": client_secret, "grant_type": "client_credentials"}
-    r = requests.post("https://id.twitch.tv/oauth2/token", data=data, timeout=20)
+def _get_app_token():
+    global APP_TOKEN
+    if APP_TOKEN:
+        return APP_TOKEN
+    if not CLIENT_ID or not CLIENT_SECRET:
+        raise RuntimeError("TWITCH_CLIENT_ID and TWITCH_CLIENT_SECRET must be set.")
+    r = requests.post(OAUTH, data={"client_id":CLIENT_ID,"client_secret":CLIENT_SECRET,"grant_type":"client_credentials"}, timeout=TIMEOUT)
     r.raise_for_status()
-    return r.json()["access_token"]
+    APP_TOKEN = r.json()["access_token"]
+    return APP_TOKEN
 
-def _headers(token: str, client_id: str):
-    return {"Authorization": f"Bearer {token}", "Client-Id": client_id}
+def _headers():
+    return {"Client-ID": CLIENT_ID, "Authorization": f"Bearer {_get_app_token()}"}
 
-def get_vod_urls_by_login(login: str, client_id: str, client_secret: str,
-                          app_token: Optional[str] = None, max_videos: int = 2) -> List[str]:
-    token = app_token or _get_app_token(client_id, client_secret)
-    # 1) get user id
-    u = requests.get(f"{API_BASE}/users?{urlencode({'login': login})}",
-                     headers=_headers(token, client_id), timeout=20).json()
-    if not u.get("data"):
+def get_latest_vods_urls(login: str, max_videos: int = 5) -> List[str]:
+    r = requests.get(f"{BASE}/users?{urlencode({'login':login})}", headers=_headers(), timeout=TIMEOUT)
+    r.raise_for_status()
+    data = r.json().get("data",[])
+    if not data:
         return []
-    user_id = u["data"][0]["id"]
-    # 2) get videos (VODs)
-    vids = requests.get(f"{API_BASE}/videos?{urlencode({'user_id': user_id, 'type': 'archive', 'first': max_videos})}",
-                        headers=_headers(token, client_id), timeout=20).json()
-    urls = [v["url"] for v in vids.get("data", []) if "url" in v]
-    return urls
+    uid = data[0]["id"]
+    rv = requests.get(f"{BASE}/videos?{urlencode({'user_id':uid, 'type':'archive', 'first':max_videos})}", headers=_headers(), timeout=TIMEOUT)
+    rv.raise_for_status()
+    vids = rv.json().get("data",[])
+    return [v.get("url") for v in vids if v.get("url")]
 
-def download_vod_segmented(vod_url: str, output_mp4: Path):
-    """
-    Descarga progresiva usando yt-dlp → MP4 directamente en disco.
-    Sin cargar el vídeo en RAM. Reintentos suaves para robustez.
-    """
-    output_mp4 = Path(output_mp4)
-    output_mp4.parent.mkdir(parents=True, exist_ok=True)
-    # Llamamos yt-dlp por subprocess para evitar overhead Python
-    cmd = [
-        "yt-dlp",
-        "-o", str(output_mp4),
-        "-f", "mp4",
-        "--no-part",            # escribe directo, evita .part
-        "--no-playlist",        # solo el vídeo
-        "--retries", "10",
-        "--fragment-retries", "10",
-        "--concurrent-fragments", "4",
-        vod_url
-    ]
-    tries = 0
-    while tries < 3:
-        try:
-            subprocess.run(cmd, check=True)
-            break
-        except subprocess.CalledProcessError:
-            tries += 1
-            time.sleep(2 * tries)
-    if not output_mp4.exists():
-        raise RuntimeError(f"Fallo descargando VOD: {vod_url}")
 
