@@ -1,67 +1,64 @@
-# twitch_streamer.py
-import os, tempfile, subprocess, requests
-from typing import List
+import os
+import time
+import requests
+from typing import List, Optional
+from urllib.parse import urlencode
+import subprocess
+from pathlib import Path
 
-BASE_URL = "https://api.twitch.tv/helix"
-OAUTH_URL = "https://id.twitch.tv/oauth2/token"
+API_BASE = "https://api.twitch.tv/helix"
 
-CLIENT_ID = os.getenv("TWITCH_CLIENT_ID")
-CLIENT_SECRET = os.getenv("TWITCH_CLIENT_SECRET")
-MANUAL_TOKEN = os.getenv("TWITCH_APP_TOKEN")
-REQ_TIMEOUT = 10.0
-
-def _get_app_token():
-    global MANUAL_TOKEN
-    if MANUAL_TOKEN:
-        return MANUAL_TOKEN
-    if not CLIENT_ID or not CLIENT_SECRET:
-        raise RuntimeError("TWITCH_CLIENT_ID/TWITCH_CLIENT_SECRET no encontrados en entorno.")
-    r = requests.post(OAUTH_URL, data={
-        "client_id": CLIENT_ID,
-        "client_secret": CLIENT_SECRET,
-        "grant_type": "client_credentials"
-    }, timeout=REQ_TIMEOUT)
+def _get_app_token(client_id: str, client_secret: str) -> str:
+    data = {"client_id": client_id, "client_secret": client_secret, "grant_type": "client_credentials"}
+    r = requests.post("https://id.twitch.tv/oauth2/token", data=data, timeout=20)
     r.raise_for_status()
-    MANUAL_TOKEN = r.json().get("access_token")
-    return MANUAL_TOKEN
+    return r.json()["access_token"]
 
-def _headers():
-    token = _get_app_token()
-    return {"Client-ID": CLIENT_ID, "Authorization": f"Bearer {token}"}
+def _headers(token: str, client_id: str):
+    return {"Authorization": f"Bearer {token}", "Client-Id": client_id}
 
-def obtener_urls_ultimos_directos(user_login: str, max_videos: int = 3) -> List[str]:
-    r = requests.get(f"{BASE_URL}/users", headers=_headers(), params={"login": user_login}, timeout=REQ_TIMEOUT)
-    r.raise_for_status()
-    data = r.json().get("data", [])
-    if not data:
+def get_vod_urls_by_login(login: str, client_id: str, client_secret: str,
+                          app_token: Optional[str] = None, max_videos: int = 2) -> List[str]:
+    token = app_token or _get_app_token(client_id, client_secret)
+    # 1) get user id
+    u = requests.get(f"{API_BASE}/users?{urlencode({'login': login})}",
+                     headers=_headers(token, client_id), timeout=20).json()
+    if not u.get("data"):
         return []
-    user_id = data[0]["id"]
-    rv = requests.get(f"{BASE_URL}/videos", headers=_headers(), params={"user_id": user_id, "type": "archive", "first": max_videos}, timeout=REQ_TIMEOUT)
-    rv.raise_for_status()
-    vids = rv.json().get("data", [])
-    return [v.get("url") for v in vids if v.get("url")]
+    user_id = u["data"][0]["id"]
+    # 2) get videos (VODs)
+    vids = requests.get(f"{API_BASE}/videos?{urlencode({'user_id': user_id, 'type': 'archive', 'first': max_videos})}",
+                        headers=_headers(token, client_id), timeout=20).json()
+    urls = [v["url"] for v in vids.get("data", []) if "url" in v]
+    return urls
 
-def descargar_vod_yt_dlp(url: str, out_dir: str = None, filename: str = None) -> str:
-    if out_dir is None:
-        out_dir = tempfile.mkdtemp(prefix="vod_")
-    os.makedirs(out_dir, exist_ok=True)
-    if filename:
-        out_path = os.path.join(out_dir, filename)
-    else:
-        tmpf = tempfile.NamedTemporaryFile(delete=False, dir=out_dir, suffix=".mp4")
-        out_path = tmpf.name
-        tmpf.close()
+def download_vod_segmented(vod_url: str, output_mp4: Path):
+    """
+    Descarga progresiva usando yt-dlp → MP4 directamente en disco.
+    Sin cargar el vídeo en RAM. Reintentos suaves para robustez.
+    """
+    output_mp4 = Path(output_mp4)
+    output_mp4.parent.mkdir(parents=True, exist_ok=True)
+    # Llamamos yt-dlp por subprocess para evitar overhead Python
     cmd = [
         "yt-dlp",
-        "--no-part",
-        "--no-mtime",
-        "--quiet",
-        "--retries", "3",
-        "--socket-timeout", "15",
-        "-f", "bestvideo+bestaudio/best",
-        "-o", out_path,
-        url
+        "-o", str(output_mp4),
+        "-f", "mp4",
+        "--no-part",            # escribe directo, evita .part
+        "--no-playlist",        # solo el vídeo
+        "--retries", "10",
+        "--fragment-retries", "10",
+        "--concurrent-fragments", "4",
+        vod_url
     ]
-    subprocess.run(cmd, check=True)
-    return out_path
+    tries = 0
+    while tries < 3:
+        try:
+            subprocess.run(cmd, check=True)
+            break
+        except subprocess.CalledProcessError:
+            tries += 1
+            time.sleep(2 * tries)
+    if not output_mp4.exists():
+        raise RuntimeError(f"Fallo descargando VOD: {vod_url}")
 
