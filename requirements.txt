@@ -1,16 +1,12 @@
-# UI y utilidades
 streamlit==1.25.0
-requests==2.31.0
-tqdm==4.66.1
-
-# vídeo/audio y procesamiento ligero
-yt-dlp==2025.1.26
+yt-dlp==2023.11.16
+moviepy==1.0.3
+opencv-python-headless==4.8.1.78
 librosa==0.10.1
 soundfile==0.12.1
-numpy==1.25.2
-
-# model / whisper (compatibilidad con torch cpu)
-whisper==1.1.10
-
-# ffmpeg-python opcional (no obligatorio si usamos subprocess)
-ffmpeg-python==0.2.0
+numpy==1.24.4
+torch==2.0.1+cpu --extra-index-url https://download.pytorch.org/whl/cpu
+transformers==4.35.0
+openai-whisper==20230314
+requests==2.31.0
+tqdm==4.66.1
